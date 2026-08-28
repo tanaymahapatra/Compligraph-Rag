@@ -1,3 +1,4 @@
+from pathlib import Path
 import pandas as pd
 import optuna
 from ragas import evaluate, EvaluationDataset, SingleTurnSample
@@ -24,9 +25,10 @@ def objective(trial):
     nodes.RERANK_THRESHOLD = threshold
     nodes.FINAL_DOCS = final_docs
 
-    # Load a reproducible sample to keep trial execution fast
-    df = pd.read_csv("./data/compliance_benchmark.csv").sample(n=5, random_state=42)
+    csv_path = Path(__file__).parent.parent / "data" / "compliance_benchmark.csv"
 
+    # Load a reproducible sample to keep trial execution fast
+    df = pd.read_csv(csv_path).sample(n=5, random_state=42)
     judge_llm = LangchainLLMWrapper(
         ChatGoogleGenerativeAI(model="gemini-3.7-flash", temperature=0)
     )

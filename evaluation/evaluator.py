@@ -2,7 +2,12 @@ import os
 import time
 import pandas as pd
 from dotenv import load_dotenv
+import sys
+from pathlib import Path
 
+root_dir = str(Path(__file__).parent.parent)
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 from src.graph import app
 
 from ragas import evaluate, EvaluationDataset, SingleTurnSample
@@ -25,8 +30,8 @@ from langchain_google_genai import (
 
 load_dotenv()
 
-CSV_PATH = "./data/compliance_benchmark.csv"
-REPORT_PATH = "./data/final_evaluation_report.csv"
+CSV_PATH = str(Path(__file__).parent.parent / "data" / "compliance_benchmark.csv")
+REPORT_PATH = str(Path(__file__).parent.parent / "data" / "final_evaluation_report.csv")
 DELAY = 0
 
 
@@ -84,7 +89,7 @@ def create_metrics():
         HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.OFF,
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.OFF,
     }
-    
+
     judge_llm = LangchainLLMWrapper(
         ChatGoogleGenerativeAI(
             model="gemini-3.7-flash",

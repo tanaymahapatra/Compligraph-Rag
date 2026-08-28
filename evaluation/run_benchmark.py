@@ -4,6 +4,7 @@ import time
 import random
 import pandas as pd
 
+from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,9 @@ load_dotenv()
 # CONFIG
 # ============================================================
 
-CACHE_DIR = "./cache"
+
+# Gets the directory where the script lives (evaluation), then goes up one parent level, then into 'cache'
+CACHE_DIR = str(Path(__file__).parent.parent / "cache")
 OUTPUT_FILE = "./data/compliance_benchmark.csv"
 
 NUM_QUESTIONS = 20
