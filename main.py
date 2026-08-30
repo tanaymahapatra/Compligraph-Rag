@@ -17,7 +17,7 @@ with st.sidebar:
     st.header("⚙️ System Status")
     st.success("FastAPI Backend: Connected (`localhost:8000`)")
     st.info("Embedding Model: `BAAI/bge-small-en-v1.5`")
-    st.info("LLM: `gemini-2.5-flash`")
+    st.info("LLM: `gemini-3.7-flash`")
 
     if st.button("Clear Chat History", type="secondary"):
         st.session_state.messages = []
