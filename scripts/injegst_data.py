@@ -1,7 +1,6 @@
-import sys
+import os
 import uuid
 import re
-import shutil
 from pathlib import Path
 from bs4 import BeautifulSoup
 
@@ -9,16 +8,20 @@ from docling.document_converter import DocumentConverter
 from fastembed import SparseTextEmbedding, TextEmbedding
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient, models
+from dotenv import load_dotenv
 
 # ============================================================
 # CONFIG
 # ============================================================
-
-BASE_DIR = Path(__file__).resolve().parent
+load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 DATA_DIR = BASE_DIR / "data"
 CACHE_DIR = BASE_DIR / "cache"
-DB_PATH = BASE_DIR / "qdrant_db"
+client = QdrantClient(
+    url=os.getenv("QDRANT_URL"),
+    api_key=os.getenv("QDRANT_API_KEY"),
+)
 
 COLLECTION_NAME = "compligraph_docs"
 
@@ -189,19 +192,6 @@ def create_chunks(documents):
 
 
 # ============================================================
-# HARD RESET QDRANT DATABASE
-# ============================================================
-
-
-def wipe_database():
-    """Physically deletes the database folder to prevent ghost data."""
-    if DB_PATH.exists() and DB_PATH.is_dir():
-        print(f"🗑️ Wiping corrupted vector database: {DB_PATH}")
-        shutil.rmtree(DB_PATH)
-    DB_PATH.mkdir(parents=True, exist_ok=True)
-
-
-# ============================================================
 # INGEST
 # ============================================================
 
@@ -211,18 +201,10 @@ def ingest(chunks):
         print("❌ No valid chunks to ingest. Aborting.")
         return
 
-    wipe_database()
     print("\nInitializing embedding models...")
 
     dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
     sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
-
-    try:
-        client = QdrantClient(path=str(DB_PATH))
-    except Exception as e:
-        print("\n" + "!" * 60)
-        print("❌ ERROR: Could not access Qdrant database folder.")
-        sys.exit(1)
 
     texts = [chunk["text"] for chunk in chunks]
 

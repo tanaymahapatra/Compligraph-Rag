@@ -20,8 +20,6 @@ from src.state import GraphState
 load_dotenv()
 
 COLLECTION_NAME = "compligraph_docs"
-DB_PATH = "./qdrant_db"
-
 DENSE_LIMIT = 14
 SPARSE_LIMIT = 14
 RRF_LIMIT = 14
@@ -54,13 +52,14 @@ web_search_tool = TavilySearch(max_results=5)
 # ============================================================
 
 _qdrant_client = None
-
-
 def get_qdrant():
     global _qdrant_client
 
     if _qdrant_client is None:
-        _qdrant_client = QdrantClient(path=DB_PATH)
+        _qdrant_client = QdrantClient(
+            url=os.getenv("QDRANT_URL"),
+            api_key=os.getenv("QDRANT_API_KEY"),
+        )
 
     return _qdrant_client
 
