@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ from langchain_tavily import TavilySearch
 from langchain_core.documents import Document
 
 from src.state import GraphState
+from src.errors import raise_gemini_error
 
 # ============================================================
 # CONFIG
@@ -19,7 +21,11 @@ from src.state import GraphState
 
 load_dotenv()
 
-COLLECTION_NAME = "compligraph_docs"
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "compligraph_docs")
+DB_PATH = os.getenv(
+    "QDRANT_PATH", str(Path(__file__).resolve().parents[1] / "qdrant_db")
+)
+
 DENSE_LIMIT = 14
 SPARSE_LIMIT = 14
 RRF_LIMIT = 14
@@ -34,15 +40,21 @@ MAX_AUDIT_ATTEMPTS = 2
 # ============================================================
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.7-flash",
+    model=os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
     temperature=0,
 )
 
-dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+dense_model = TextEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    threads=1,
+    cache_dir=os.getenv("FASTEMBED_CACHE_PATH"),
+)
 
-sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+sparse_model = SparseTextEmbedding(
+    model_name="Qdrant/bm25", threads=1, cache_dir=os.getenv("FASTEMBED_CACHE_PATH")
+)
 
-reranker = CrossEncoder("BAAI/bge-reranker-base")
+reranker = CrossEncoder("BAAI/bge-reranker-base", device="cpu")
 
 web_search_tool = TavilySearch(max_results=5)
 
@@ -52,14 +64,20 @@ web_search_tool = TavilySearch(max_results=5)
 # ============================================================
 
 _qdrant_client = None
+
+
 def get_qdrant():
     global _qdrant_client
 
     if _qdrant_client is None:
-        _qdrant_client = QdrantClient(
-            url=os.getenv("QDRANT_URL"),
-            api_key=os.getenv("QDRANT_API_KEY"),
-        )
+        if os.getenv("QDRANT_URL"):
+            _qdrant_client = QdrantClient(
+                url=os.environ["QDRANT_URL"],
+                api_key=os.getenv("QDRANT_API_KEY"),
+                timeout=30,
+            )
+        else:
+            _qdrant_client = QdrantClient(path=DB_PATH)
 
     return _qdrant_client
 
@@ -170,10 +188,10 @@ Classify the user's query.
         is_safe = result.is_safe
 
     except Exception as e:
-        print(f"Guardrail error: {e}")
+        raise_gemini_error(e)
 
     return {
-        "is_safe": True,
+        "is_safe": is_safe,
         "loop_count": 0,
         "audit_feedback": "",
         "generation": "",
@@ -456,6 +474,8 @@ def web_search_fallback(state: GraphState):
             print(f"Tavily error: {e}")
             continue
 
+        if isinstance(results, dict) and isinstance(results.get("results"), list):
+            results = results["results"]
         if not isinstance(results, list):
             results = [results]
 
@@ -647,9 +667,7 @@ QUESTION:
 
     except Exception as e:
 
-        print(f"Generator error: {e}")
-
-        answer = "Error generating the answer."
+        raise_gemini_error(e)
 
     return {"generation": answer}
 
@@ -733,15 +751,7 @@ SOURCES:
 
     except Exception as e:
 
-        print(f"Auditor error: {e}")
-
-        # Fail closed.
-        compliant = False
-
-        feedback = (
-            "The answer could not be verified. "
-            "Regenerate using only the supplied sources."
-        )
+        raise_gemini_error(e)
 
     print(f"Audit result: " f"{'PASS' if compliant else 'FAIL'}")
 

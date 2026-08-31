@@ -1,5 +1,8 @@
 import streamlit as st
 import requests
+import os
+
+API_URL = os.getenv("COMPLIGRAPH_API_URL", "http://127.0.0.1:8001").rstrip("/")
 
 # ==========================================
 # 1. PAGE CONFIGURATION & STYLING
@@ -15,9 +18,20 @@ st.divider()
 # Sidebar options
 with st.sidebar:
     st.header("⚙️ System Status")
-    st.success("FastAPI Backend: Connected (`localhost:8000`)")
+    try:
+        backend_status = requests.get(API_URL + "/", timeout=3)
+        backend_status.raise_for_status()
+        if backend_status.json().get("status") == "active":
+            st.success("FastAPI Backend: Connected")
+        else:
+            st.warning(
+                backend_status.json().get("upstream_error")
+                or "Backend connected; API credentials are still required."
+            )
+    except requests.RequestException:
+        st.warning("FastAPI backend is unavailable.")
     st.info("Embedding Model: `BAAI/bge-small-en-v1.5`")
-    st.info("LLM: `gemini-3.7-flash`")
+    st.info(f"LLM: `{os.getenv('GEMINI_MODEL', 'gemini-3.7-flash')}`")
 
     if st.button("Clear Chat History", type="secondary"):
         st.session_state.messages = []
@@ -58,10 +72,17 @@ if user_query := st.chat_input(
             try:
                 # Send HTTP POST request to your local server
                 response = requests.post(
-                    "http://localhost:8000/query",
+                    API_URL + "/query",
                     json={"question": user_query},
-                    timeout=60,
+                    timeout=180,
                 )
+                if response.status_code in (429, 503):
+                    st.warning(
+                        response.json().get(
+                            "detail", "The backend is not ready. Please retry later."
+                        )
+                    )
+                    st.stop()
                 response.raise_for_status()  # Raise exception for 4xx/5xx status codes
 
                 # Parse the JSON response
@@ -95,7 +116,7 @@ if user_query := st.chat_input(
 
             except requests.exceptions.ConnectionError:
                 st.error(
-                    "🚨 Connection Error: Ensure your FastAPI server (`server.py`) is running on port 8000."
+                    "🚨 Connection Error: The configured FastAPI backend is unavailable."
                 )
             except requests.exceptions.Timeout:
                 st.error(

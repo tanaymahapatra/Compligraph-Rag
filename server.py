@@ -2,9 +2,26 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List
+import asyncio
+import os
+from functools import lru_cache
+from dotenv import load_dotenv
+from src.errors import UpstreamServiceError
+from src.query_budget import reserve_query, DailyLimitReached
 
-# Import the compiled LangGraph workflow
-from src.graph import app as langgraph_app
+load_dotenv()
+
+
+@lru_cache(maxsize=1)
+def get_workflow():
+    # Defer expensive model loading until the first query.
+    from src.graph import app as langgraph_app
+
+    return langgraph_app
+
+
+query_lock = asyncio.Lock()
+last_upstream_error = None
 
 # ==========================================
 # 1. INITIALIZE FASTAPI APP
@@ -18,7 +35,9 @@ app = FastAPI(
 # Configure CORS so Streamlit (or React) can safely communicate with this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to your frontend URL
+    allow_origins=os.getenv(
+        "CORS_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501"
+    ).split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,7 +50,12 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     """Expected JSON payload from the frontend."""
 
-    question: str = Field(..., description="The compliance question from the user.")
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="The compliance question from the user.",
+    )
 
 
 class QueryResponse(BaseModel):
@@ -49,8 +73,19 @@ class QueryResponse(BaseModel):
 @app.get("/")
 async def health_check():
     """Simple health check to verify the server is running."""
+    missing = [
+        key for key in ("GOOGLE_API_KEY", "TAVILY_API_KEY") if not os.getenv(key)
+    ]
     return {
-        "status": "active",
+        "status": (
+            "configuration_required"
+            if missing
+            else ("dependency_unavailable" if last_upstream_error else "active")
+        ),
+        "upstream_error": last_upstream_error,
+        "missing_configuration": missing,
+        "model": os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
+        "vector_store": "remote" if os.getenv("QDRANT_URL") else "local",
         "message": "CompliGraph AI Backend is running. Access /docs for Swagger UI.",
     }
 
@@ -61,12 +96,28 @@ async def process_query(request: QueryRequest):
     Ingests a user question, triggers the LangGraph state machine,
     and returns the generated answer and retrieved documents.
     """
+    global last_upstream_error
+    if not os.getenv("GOOGLE_API_KEY") or not os.getenv("TAVILY_API_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="Configure Gemini and Tavily credentials before querying.",
+        )
+    if query_lock.locked():
+        raise HTTPException(
+            status_code=429,
+            detail="Another question is being processed. Please retry shortly.",
+        )
     try:
         # 1. Initialize the state memory with the user's question
         initial_state = {"question": request.question}
 
         # 2. Execute the LangGraph agent pipeline
-        result = await langgraph_app.ainvoke(initial_state)
+        # One workflow at a time keeps peak RAM bounded on the 4 GB VM.
+        async with query_lock:
+            await asyncio.to_thread(reserve_query)
+            langgraph_app = await asyncio.to_thread(get_workflow)
+            result = await langgraph_app.ainvoke(initial_state)
+            last_upstream_error = None
 
         # 3. Package and return the results
         raw_docs = result.get("documents", [])
@@ -82,6 +133,11 @@ async def process_query(request: QueryRequest):
             # 3. FIXED: Mismatched state key mapped correctly
             web_search_used=result.get("web_search_used", False),
         )
+    except DailyLimitReached as e:
+        raise HTTPException(status_code=429, detail=str(e)) from None
+    except UpstreamServiceError as e:
+        last_upstream_error = str(e)
+        raise HTTPException(status_code=503, detail=str(e)) from None
     except Exception as e:
         # Generic error for the client; log the actual traceback internally
         print(f"Internal Graph Error: {e}")
