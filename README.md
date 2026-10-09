@@ -443,7 +443,5 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-<div align="center">
-<p>Built with ❤️ by <a href="https://github.com/tanaymahapatra">tanaymahapatra</a></p>
-<p><em>If this project helped you, consider giving it a ⭐!</em></p>
-</div>
+
+
